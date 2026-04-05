@@ -1,20 +1,18 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║           BRAINROT HOPPER — Server Scanner Real            ║
--- ║  Salta de servidor en servidor leyendo brainrots reales    ║
+-- ║           BRAINROT HOPPER — Rutas Reales del Juego         ║
+-- ║  workspace.Plots > AnimalPodiums > animales reales         ║
 -- ╚══════════════════════════════════════════════════════════════╝
--- Ejecuta desde dentro de Steal a Brainrot con tu executor
 
 local Players         = game:GetService("Players")
 local TeleportService = game:GetService("TeleportService")
 local HttpService     = game:GetService("HttpService")
-local RunService      = game:GetService("RunService")
 local UserInput       = game:GetService("UserInputService")
 local LocalPlayer     = Players.LocalPlayer
 local PLACE_ID        = game.PlaceId
 
--- ── RARIDADES ────────────────────────────────────────────────
--- Precio aproximado en el juego (para calcular valor del lobby)
+-- ── DATOS DE RARIDAD ─────────────────────────────────────────
 local RARITY_VALUE = {
+    ["OG"]           = 999999999,
     ["Brainrot God"] = 100000000,
     ["Secret"]       = 10000000,
     ["Mythic"]       = 1000000,
@@ -26,6 +24,7 @@ local RARITY_VALUE = {
 }
 
 local RARITY_COLOR = {
+    ["OG"]           = Color3.fromRGB(255, 255, 255),
     ["Brainrot God"] = Color3.fromRGB(255, 30,  30),
     ["Secret"]       = Color3.fromRGB(255, 140,  0),
     ["Mythic"]       = Color3.fromRGB(180,  0, 255),
@@ -37,6 +36,7 @@ local RARITY_COLOR = {
 }
 
 local RARITY_LABEL = {
+    ["OG"]           = "✨ OG",
     ["Brainrot God"] = "👑 BRAINROT GOD",
     ["Secret"]       = "🔥 SECRET",
     ["Mythic"]       = "💜 MYTHIC",
@@ -51,94 +51,157 @@ local function formatMoney(n)
     if n >= 1e9 then return string.format("$%.1fB", n/1e9)
     elseif n >= 1e6 then return string.format("$%.1fM", n/1e6)
     elseif n >= 1e3 then return string.format("$%.1fK", n/1e3)
-    else return "$"..tostring(n) end
+    else return "$"..tostring(math.floor(n)) end
 end
 
--- ── LEER BRAINROTS DEL SERVIDOR ACTUAL ──────────────────────
+-- ══════════════════════════════════════════════════════════════
+-- LEER BRAINROTS REALES
+-- Estructura confirmada del juego:
+--   workspace.Plots[plot].AnimalPodiums[podium]
+--     └── Animal (Model) con atributo "Rarity" o StringValue "Rarity"
+-- ══════════════════════════════════════════════════════════════
 local function leerBrainrots()
     local found = {}
+    local seen  = {}
 
-    -- Buscar en todas las estructuras posibles del juego
-    local searchRoots = {
-        workspace,
-        game:GetService("ReplicatedStorage"),
-    }
-
-    local function scanFolder(folder, depth)
-        if depth > 6 then return end
-        for _, obj in ipairs(folder:GetChildren()) do
-            -- Buscar atributos de raridad directamente
-            local rarity = obj:GetAttribute("Rarity")
-                        or obj:GetAttribute("rarity")
-                        or obj:GetAttribute("PetRarity")
-
-            -- Buscar StringValues dentro
-            if not rarity then
-                local rv = obj:FindFirstChild("Rarity") or obj:FindFirstChild("rarity")
-                if rv and rv:IsA("StringValue") then
-                    rarity = rv.Value
-                end
-            end
-
-            -- Buscar por nombre de carpeta (algunos juegos usan carpetas por raridad)
-            if not rarity and RARITY_VALUE[obj.Name] then
-                rarity = obj.Name
-            end
-
-            -- Buscar gen/sec
-            local genPerSec = obj:GetAttribute("Generation")
-                           or obj:GetAttribute("GenPerSec")
-                           or obj:GetAttribute("MoneyPerSecond")
-                           or obj:GetAttribute("Income")
-
-            if genPerSec and type(genPerSec) == "string" then
-                local num = tonumber(genPerSec:match("[%d%.]+"))
-                local mult = genPerSec:find("T") and 1e12
-                          or genPerSec:find("B") and 1e9
-                          or genPerSec:find("M") and 1e6
-                          or genPerSec:find("K") and 1e3
-                          or 1
-                genPerSec = num and (num * mult) or nil
-            end
-
-            if rarity and RARITY_VALUE[rarity] then
-                table.insert(found, {
-                    name      = obj.Name,
-                    rarity    = rarity,
-                    value     = RARITY_VALUE[rarity],
-                    genPerSec = genPerSec,
-                    instance  = obj,
-                })
-            else
-                -- Seguir buscando dentro
-                if obj:IsA("Folder") or obj:IsA("Model") or obj:IsA("Configuration") then
-                    scanFolder(obj, depth + 1)
+    local function getRarity(obj)
+        -- Atributos directos
+        for _, name in ipairs({"Rarity","rarity","AnimalRarity","Type","PetRarity"}) do
+            local v = obj:GetAttribute(name)
+            if v and RARITY_VALUE[v] then return v end
+        end
+        -- StringValue / IntValue hijos
+        for _, child in ipairs(obj:GetChildren()) do
+            if child.Name:lower():find("rarity") or child.Name:lower():find("type") then
+                if child:IsA("StringValue") and RARITY_VALUE[child.Value] then
+                    return child.Value
                 end
             end
         end
-    end
-
-    for _, root in ipairs(searchRoots) do
-        pcall(scanFolder, root, 0)
-    end
-
-    -- Quitar duplicados por nombre
-    local seen = {}
-    local unique = {}
-    for _, b in ipairs(found) do
-        local key = b.name .. b.rarity
-        if not seen[key] then
-            seen[key] = true
-            table.insert(unique, b)
+        -- Buscar un nivel más adentro (Model > Part > StringValue)
+        for _, child in ipairs(obj:GetChildren()) do
+            if child:IsA("Model") or child:IsA("Part") or child:IsA("Folder") then
+                for _, sv in ipairs(child:GetChildren()) do
+                    if (sv.Name:lower():find("rarity") or sv.Name:lower():find("type"))
+                       and sv:IsA("StringValue") and RARITY_VALUE[sv.Value] then
+                        return sv.Value
+                    end
+                end
+            end
         end
+        return nil
     end
 
-    -- Ordenar por valor descendente
-    table.sort(unique, function(a, b) return a.value > b.value end)
-    return unique
+    local function getGen(obj)
+        for _, name in ipairs({"Generation","GenPerSec","MoneyPerSecond","Income","GenerationPerSecond","Gen"}) do
+            local v = obj:GetAttribute(name)
+            if v then
+                if type(v) == "number" then return v end
+                if type(v) == "string" then
+                    local n = tonumber(v:match("[%d%.]+")) or 0
+                    local m = v:find("T") and 1e12 or v:find("B") and 1e9
+                           or v:find("M") and 1e6  or v:find("K") and 1e3 or 1
+                    return n * m
+                end
+            end
+        end
+        for _, child in ipairs(obj:GetChildren()) do
+            local low = child.Name:lower()
+            if (low:find("gen") or low:find("income") or low:find("money"))
+               and (child:IsA("NumberValue") or child:IsA("IntValue")) then
+                return child.Value
+            end
+        end
+        return nil
+    end
+
+    local function add(name, rarity, gen)
+        if not name or name == "" then return end
+        local key = name..(rarity or "")
+        if seen[key] then return end
+        seen[key] = true
+        table.insert(found, {
+            name      = name,
+            rarity    = rarity or "Common",
+            value     = RARITY_VALUE[rarity or "Common"] or 10,
+            genPerSec = gen,
+        })
+    end
+
+    -- ── RUTA PRINCIPAL: workspace.Plots ──────────────────────
+    local ok1 = pcall(function()
+        local Plots = workspace:WaitForChild("Plots", 3)
+        for _, plot in ipairs(Plots:GetChildren()) do
+            -- AnimalPodiums
+            local podiums = plot:FindFirstChild("AnimalPodiums")
+            if podiums then
+                for _, podium in ipairs(podiums:GetChildren()) do
+                    -- El animal puede estar directo o en hijo
+                    local animal = podium:FindFirstChildOfClass("Model")
+                               or podium:FindFirstChild("Animal")
+                               or podium:FindFirstChild("Brainrot")
+                    if animal then
+                        local r = getRarity(animal) or getRarity(podium)
+                        add(animal.Name, r, getGen(animal) or getGen(podium))
+                    else
+                        local r = getRarity(podium)
+                        if r then add(podium.Name, r, getGen(podium)) end
+                    end
+                end
+            end
+            -- Alternativas: Animals, Brainrots, Pets directo en el plot
+            for _, folder in ipairs({"Animals","Brainrots","Pets","AnimalFolder","Podiums"}) do
+                local f = plot:FindFirstChild(folder)
+                if f then
+                    for _, obj in ipairs(f:GetChildren()) do
+                        local r = getRarity(obj)
+                        add(obj.Name, r, getGen(obj))
+                    end
+                end
+            end
+        end
+    end)
+
+    -- ── RUTA 2: workspace genérica si Plots no funcionó ──────
+    if #found == 0 then
+        pcall(function()
+            local function scan(parent, depth)
+                if depth > 5 then return end
+                for _, obj in ipairs(parent:GetChildren()) do
+                    local r = getRarity(obj)
+                    if r then
+                        add(obj.Name, r, getGen(obj))
+                    elseif obj:IsA("Folder") or obj:IsA("Model") then
+                        scan(obj, depth + 1)
+                    end
+                end
+            end
+            scan(workspace, 0)
+        end)
+    end
+
+    -- ── RUTA 3: ReplicatedStorage ─────────────────────────────
+    pcall(function()
+        local rs = game:GetService("ReplicatedStorage")
+        for _, fname in ipairs({"Datas","Animals","Brainrots","ServerData","Data"}) do
+            local f = rs:FindFirstChild(fname)
+            if f then
+                local animals = f:FindFirstChild("Animals") or f
+                for _, obj in ipairs(animals:GetChildren()) do
+                    local r = getRarity(obj)
+                    if r then add(obj.Name, r, getGen(obj)) end
+                end
+            end
+        end
+    end)
+
+    table.sort(found, function(a,b) return a.value > b.value end)
+    return found
 end
 
--- ── UI ───────────────────────────────────────────────────────
+-- ══════════════════════════════════════════════════════════════
+-- UI
+-- ══════════════════════════════════════════════════════════════
 local gui = Instance.new("ScreenGui")
 gui.Name = "BrainrotHopper"
 gui.ResetOnSpawn = false
@@ -153,12 +216,10 @@ Main.BorderSizePixel = 0
 Main.ClipsDescendants = true
 Main.Parent = gui
 Instance.new("UICorner", Main).CornerRadius = UDim.new(0, 18)
-
 local Stroke = Instance.new("UIStroke", Main)
 Stroke.Color = Color3.fromRGB(255, 140, 0)
 Stroke.Thickness = 2
 
--- Degradado de fondo
 local BgGrad = Instance.new("UIGradient", Main)
 BgGrad.Color = ColorSequence.new({
     ColorSequenceKeypoint.new(0, Color3.fromRGB(18, 12, 30)),
@@ -172,7 +233,6 @@ Header.Size = UDim2.new(1, 0, 0, 70)
 Header.BackgroundColor3 = Color3.fromRGB(20, 12, 35)
 Header.BorderSizePixel = 0
 Header.Parent = Main
-
 local HGrad = Instance.new("UIGradient", Header)
 HGrad.Color = ColorSequence.new({
     ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 100, 0)),
@@ -196,9 +256,9 @@ local SubLbl = Instance.new("TextLabel")
 SubLbl.Size = UDim2.new(1, -60, 0, 20)
 SubLbl.Position = UDim2.new(0, 16, 0, 46)
 SubLbl.BackgroundTransparency = 1
-SubLbl.Text = "Lee los brainrots REALES de este servidor"
+SubLbl.Text = "Brainrots reales • workspace.Plots > AnimalPodiums"
 SubLbl.TextColor3 = Color3.fromRGB(255, 180, 80)
-SubLbl.TextSize = 12
+SubLbl.TextSize = 11
 SubLbl.Font = Enum.Font.Gotham
 SubLbl.TextXAlignment = Enum.TextXAlignment.Left
 SubLbl.Parent = Header
@@ -216,7 +276,7 @@ CloseBtn.Parent = Header
 Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0, 8)
 CloseBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
 
--- Panel de info del servidor actual
+-- Info panel
 local InfoPanel = Instance.new("Frame")
 InfoPanel.Size = UDim2.new(1, -24, 0, 72)
 InfoPanel.Position = UDim2.new(0, 12, 0, 78)
@@ -230,48 +290,48 @@ local ServerLbl = Instance.new("TextLabel")
 ServerLbl.Size = UDim2.new(1, -12, 0, 22)
 ServerLbl.Position = UDim2.new(0, 12, 0, 8)
 ServerLbl.BackgroundTransparency = 1
-ServerLbl.Text = "📍 Servidor actual: " .. string.sub(game.JobId, 1, 20) .. "..."
+ServerLbl.Text = "📍 " .. string.sub(game.JobId, 1, 30) .. "..."
 ServerLbl.TextColor3 = Color3.fromRGB(180, 160, 220)
-ServerLbl.TextSize = 12
-ServerLbl.Font = Enum.Font.Gotham
+ServerLbl.TextSize = 11
+ServerLbl.Font = Enum.Font.Code
 ServerLbl.TextXAlignment = Enum.TextXAlignment.Left
 ServerLbl.Parent = InfoPanel
 
 local ValueLbl = Instance.new("TextLabel")
-ValueLbl.Size = UDim2.new(0.5, -12, 0, 24)
-ValueLbl.Position = UDim2.new(0, 12, 0, 32)
+ValueLbl.Size = UDim2.new(0.5, 0, 0, 26)
+ValueLbl.Position = UDim2.new(0, 12, 0, 36)
 ValueLbl.BackgroundTransparency = 1
-ValueLbl.Text = "💰 Valor total: escaneando..."
+ValueLbl.Text = "💰 Valor: —"
 ValueLbl.TextColor3 = Color3.fromRGB(80, 220, 120)
-ValueLbl.TextSize = 13
+ValueLbl.TextSize = 14
 ValueLbl.Font = Enum.Font.GothamBold
 ValueLbl.TextXAlignment = Enum.TextXAlignment.Left
 ValueLbl.Parent = InfoPanel
 
 local CountLbl = Instance.new("TextLabel")
-CountLbl.Size = UDim2.new(0.5, -12, 0, 24)
-CountLbl.Position = UDim2.new(0.5, 0, 0, 32)
+CountLbl.Size = UDim2.new(0.5, 0, 0, 26)
+CountLbl.Position = UDim2.new(0.5, 0, 0, 36)
 CountLbl.BackgroundTransparency = 1
 CountLbl.Text = "🧠 Brainrots: —"
 CountLbl.TextColor3 = Color3.fromRGB(200, 160, 255)
-CountLbl.TextSize = 13
+CountLbl.TextSize = 14
 CountLbl.Font = Enum.Font.GothamBold
 CountLbl.TextXAlignment = Enum.TextXAlignment.Left
 CountLbl.Parent = InfoPanel
 
--- Separador con label
+-- Sep
 local SepLbl = Instance.new("TextLabel")
 SepLbl.Size = UDim2.new(1, -24, 0, 18)
 SepLbl.Position = UDim2.new(0, 12, 0, 158)
 SepLbl.BackgroundTransparency = 1
-SepLbl.Text = "BRAINROTS EN ESTE SERVIDOR  (ordenados por valor)"
+SepLbl.Text = "BRAINROTS EN ESTE SERVIDOR  (mayor valor primero)"
 SepLbl.TextColor3 = Color3.fromRGB(255, 140, 0)
 SepLbl.TextSize = 10
 SepLbl.Font = Enum.Font.GothamBold
 SepLbl.TextXAlignment = Enum.TextXAlignment.Left
 SepLbl.Parent = Main
 
--- Lista scroll
+-- Scroll
 local Scroll = Instance.new("ScrollingFrame")
 Scroll.Size = UDim2.new(1, -24, 1, -326)
 Scroll.Position = UDim2.new(0, 12, 0, 178)
@@ -281,12 +341,9 @@ Scroll.ScrollBarThickness = 4
 Scroll.ScrollBarImageColor3 = Color3.fromRGB(255, 140, 0)
 Scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
 Scroll.Parent = Main
+Instance.new("UIListLayout", Scroll).Padding = UDim.new(0, 6)
 
-local ListLayout = Instance.new("UIListLayout", Scroll)
-ListLayout.Padding = UDim.new(0, 6)
-ListLayout.SortOrder = Enum.SortOrder.LayoutOrder
-
--- Panel inferior: botones de acción
+-- Bottom panel
 local BottomPanel = Instance.new("Frame")
 BottomPanel.Size = UDim2.new(1, -24, 0, 110)
 BottomPanel.Position = UDim2.new(0, 12, 1, -120)
@@ -296,20 +353,19 @@ BottomPanel.Parent = Main
 Instance.new("UICorner", BottomPanel).CornerRadius = UDim.new(0, 12)
 Instance.new("UIStroke", BottomPanel).Color = Color3.fromRGB(50, 40, 80)
 
--- Filtro de raridad mínima
 local FilterLbl = Instance.new("TextLabel")
 FilterLbl.Size = UDim2.new(1, -12, 0, 18)
 FilterLbl.Position = UDim2.new(0, 12, 0, 8)
 FilterLbl.BackgroundTransparency = 1
-FilterLbl.Text = "FILTRO: saltar auto si NO hay al menos..."
+FilterLbl.Text = "SALTAR AUTO si NO hay al menos rareza:"
 FilterLbl.TextColor3 = Color3.fromRGB(140, 120, 180)
 FilterLbl.TextSize = 10
 FilterLbl.Font = Enum.Font.GothamBold
 FilterLbl.TextXAlignment = Enum.TextXAlignment.Left
 FilterLbl.Parent = BottomPanel
 
-local rarityOptions = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Secret","Brainrot God"}
-local selectedRarity = "Epic"
+local rarityOptions = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Secret","Brainrot God","OG"}
+local selectedRarity = "Legendary"
 local rarityBtns = {}
 
 local rarityRow = Instance.new("Frame")
@@ -317,55 +373,47 @@ rarityRow.Size = UDim2.new(1, -12, 0, 28)
 rarityRow.Position = UDim2.new(0, 6, 0, 28)
 rarityRow.BackgroundTransparency = 1
 rarityRow.Parent = BottomPanel
+local rl = Instance.new("UIListLayout", rarityRow)
+rl.FillDirection = Enum.FillDirection.Horizontal
+rl.Padding = UDim.new(0, 3)
 
-local rarityLayout = Instance.new("UIListLayout", rarityRow)
-rarityLayout.FillDirection = Enum.FillDirection.Horizontal
-rarityLayout.Padding = UDim.new(0, 4)
+local shortNames = {
+    ["Common"]="COM",["Uncommon"]="UC",["Rare"]="RARE",
+    ["Epic"]="EPIC",["Legendary"]="LEG",["Mythic"]="MYT",
+    ["Secret"]="SEC",["Brainrot God"]="GOD",["OG"]="OG"
+}
 
 local function updateRarityBtns()
-    local targetIdx = table.find(rarityOptions, selectedRarity) or 1
+    local ti = table.find(rarityOptions, selectedRarity) or 1
     for i, btn in ipairs(rarityBtns) do
-        if i == targetIdx then
-            btn.BackgroundColor3 = Color3.fromRGB(255, 140, 0)
-            btn.TextColor3 = Color3.fromRGB(0, 0, 0)
-        else
-            btn.BackgroundColor3 = Color3.fromRGB(35, 28, 55)
-            btn.TextColor3 = Color3.fromRGB(160, 140, 200)
-        end
+        btn.BackgroundColor3 = (i == ti) and Color3.fromRGB(255,140,0) or Color3.fromRGB(35,28,55)
+        btn.TextColor3 = (i == ti) and Color3.fromRGB(0,0,0) or Color3.fromRGB(160,140,200)
     end
 end
 
 for i, r in ipairs(rarityOptions) do
-    local short = r == "Brainrot God" and "GOD"
-              or r == "Uncommon" and "UC"
-              or r == "Legendary" and "LEG"
-              or r:sub(1,3):upper()
     local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0, 48, 1, 0)
-    btn.BackgroundColor3 = Color3.fromRGB(35, 28, 55)
-    btn.Text = short
-    btn.TextColor3 = Color3.fromRGB(160, 140, 200)
+    btn.Size = UDim2.new(0, 44, 1, 0)
+    btn.BackgroundColor3 = Color3.fromRGB(35,28,55)
+    btn.Text = shortNames[r] or r:sub(1,3):upper()
+    btn.TextColor3 = Color3.fromRGB(160,140,200)
     btn.TextSize = 10
     btn.Font = Enum.Font.GothamBold
     btn.BorderSizePixel = 0
     btn.Parent = rarityRow
     Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
     table.insert(rarityBtns, btn)
-    btn.MouseButton1Click:Connect(function()
-        selectedRarity = r
-        updateRarityBtns()
-    end)
+    btn.MouseButton1Click:Connect(function() selectedRarity = r; updateRarityBtns() end)
 end
 updateRarityBtns()
 
--- Botones principales
 local ScanBtn = Instance.new("TextButton")
 ScanBtn.Size = UDim2.new(0.48, -4, 0, 36)
 ScanBtn.Position = UDim2.new(0, 8, 0, 66)
-ScanBtn.BackgroundColor3 = Color3.fromRGB(255, 130, 0)
-ScanBtn.Text = "🔍  ESCANEAR ESTE SERVER"
-ScanBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
-ScanBtn.TextSize = 12
+ScanBtn.BackgroundColor3 = Color3.fromRGB(255,130,0)
+ScanBtn.Text = "🔍  ESCANEAR"
+ScanBtn.TextColor3 = Color3.fromRGB(0,0,0)
+ScanBtn.TextSize = 13
 ScanBtn.Font = Enum.Font.GothamBold
 ScanBtn.BorderSizePixel = 0
 ScanBtn.Parent = BottomPanel
@@ -374,185 +422,163 @@ Instance.new("UICorner", ScanBtn).CornerRadius = UDim.new(0, 10)
 local HopBtn = Instance.new("TextButton")
 HopBtn.Size = UDim2.new(0.48, -4, 0, 36)
 HopBtn.Position = UDim2.new(0.52, -4, 0, 66)
-HopBtn.BackgroundColor3 = Color3.fromRGB(40, 180, 100)
-HopBtn.Text = "⏭  SALTAR AL SIGUIENTE"
-HopBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-HopBtn.TextSize = 12
+HopBtn.BackgroundColor3 = Color3.fromRGB(40,180,100)
+HopBtn.Text = "⏭  SALTAR SERVER"
+HopBtn.TextColor3 = Color3.fromRGB(255,255,255)
+HopBtn.TextSize = 13
 HopBtn.Font = Enum.Font.GothamBold
 HopBtn.BorderSizePixel = 0
 HopBtn.Parent = BottomPanel
 Instance.new("UICorner", HopBtn).CornerRadius = UDim.new(0, 10)
 
--- ── HACER DRAGGABLE ──────────────────────────────────────────
+-- Draggable
 do
     local drag, ds, sp
     Header.InputBegan:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1 then
-            drag=true; ds=i.Position; sp=Main.Position
-        end
+        if i.UserInputType == Enum.UserInputType.MouseButton1 then drag=true;ds=i.Position;sp=Main.Position end
     end)
     Header.InputEnded:Connect(function(i)
         if i.UserInputType == Enum.UserInputType.MouseButton1 then drag=false end
     end)
     UserInput.InputChanged:Connect(function(i)
         if drag and i.UserInputType == Enum.UserInputType.MouseMovement then
-            local d = i.Position - ds
-            Main.Position = UDim2.new(sp.X.Scale, sp.X.Offset+d.X, sp.Y.Scale, sp.Y.Offset+d.Y)
+            local d=i.Position-ds
+            Main.Position=UDim2.new(sp.X.Scale,sp.X.Offset+d.X,sp.Y.Scale,sp.Y.Offset+d.Y)
         end
     end)
 end
 
--- ── RENDERIZAR LISTA DE BRAINROTS ────────────────────────────
+-- Render
 local function limpiarScroll()
     for _, c in ipairs(Scroll:GetChildren()) do
-        if c:IsA("Frame") then c:Destroy() end
+        if not c:IsA("UIListLayout") then c:Destroy() end
     end
     Scroll.CanvasSize = UDim2.new(0,0,0,0)
 end
 
 local function renderBrainrots(brainrots)
     limpiarScroll()
-
     if #brainrots == 0 then
         local empty = Instance.new("TextLabel")
-        empty.Size = UDim2.new(1, -8, 0, 60)
+        empty.Size = UDim2.new(1,-8,0,90)
         empty.BackgroundTransparency = 1
-        empty.Text = "😕  No se encontraron brainrots en este servidor\n(puede que el juego use otra estructura interna)"
-        empty.TextColor3 = Color3.fromRGB(120, 100, 160)
-        empty.TextSize = 13
+        empty.Text = "😕  No se detectaron brainrots.\n\nAbre la consola F9 y ejecuta:\nprint(workspace.Plots)\npara ver la estructura."
+        empty.TextColor3 = Color3.fromRGB(120,100,160)
+        empty.TextSize = 12
         empty.Font = Enum.Font.Gotham
         empty.TextWrapped = true
         empty.LayoutOrder = 1
         empty.Parent = Scroll
-        Scroll.CanvasSize = UDim2.new(0,0,0,70)
+        Scroll.CanvasSize = UDim2.new(0,0,0,100)
         return
     end
-
     for i, b in ipairs(brainrots) do
         local row = Instance.new("Frame")
-        row.Size = UDim2.new(1, -8, 0, 52)
-        row.BackgroundColor3 = Color3.fromRGB(20, 16, 32)
+        row.Size = UDim2.new(1,-8,0,54)
+        row.BackgroundColor3 = Color3.fromRGB(20,16,32)
         row.BorderSizePixel = 0
         row.LayoutOrder = i
         row.Parent = Scroll
-        Instance.new("UICorner", row).CornerRadius = UDim.new(0, 10)
+        Instance.new("UICorner", row).CornerRadius = UDim.new(0,10)
 
-        -- Barra de color de raridad a la izquierda
+        local stroke = Instance.new("UIStroke", row)
+        stroke.Color = RARITY_COLOR[b.rarity] or Color3.fromRGB(60,50,90)
+        stroke.Thickness = b.value >= 1000000 and 2 or 1
+        stroke.Transparency = b.value >= 1000000 and 0 or 0.65
+
         local bar = Instance.new("Frame")
-        bar.Size = UDim2.new(0, 5, 1, -10)
-        bar.Position = UDim2.new(0, 6, 0, 5)
+        bar.Size = UDim2.new(0,5,1,-10)
+        bar.Position = UDim2.new(0,6,0,5)
         bar.BackgroundColor3 = RARITY_COLOR[b.rarity] or Color3.fromRGB(100,100,100)
         bar.BorderSizePixel = 0
         bar.Parent = row
-        Instance.new("UICorner", bar).CornerRadius = UDim.new(0, 3)
+        Instance.new("UICorner", bar).CornerRadius = UDim.new(0,3)
 
-        -- Número
         local numLbl = Instance.new("TextLabel")
-        numLbl.Size = UDim2.new(0, 24, 1, 0)
-        numLbl.Position = UDim2.new(0, 14, 0, 0)
+        numLbl.Size = UDim2.new(0,24,1,0)
+        numLbl.Position = UDim2.new(0,14,0,0)
         numLbl.BackgroundTransparency = 1
         numLbl.Text = "#"..i
-        numLbl.TextColor3 = Color3.fromRGB(90, 80, 120)
+        numLbl.TextColor3 = Color3.fromRGB(90,80,120)
         numLbl.TextSize = 11
         numLbl.Font = Enum.Font.GothamBold
         numLbl.Parent = row
 
-        -- Nombre
         local nameLbl = Instance.new("TextLabel")
-        nameLbl.Size = UDim2.new(0.45, 0, 0, 26)
-        nameLbl.Position = UDim2.new(0, 42, 0, 6)
+        nameLbl.Size = UDim2.new(0.52,0,0,24)
+        nameLbl.Position = UDim2.new(0,42,0,5)
         nameLbl.BackgroundTransparency = 1
         nameLbl.Text = b.name
-        nameLbl.TextColor3 = Color3.fromRGB(240, 230, 255)
+        nameLbl.TextColor3 = Color3.fromRGB(240,230,255)
         nameLbl.TextSize = 13
         nameLbl.Font = Enum.Font.GothamBold
         nameLbl.TextXAlignment = Enum.TextXAlignment.Left
         nameLbl.TextTruncate = Enum.TextTruncate.AtEnd
         nameLbl.Parent = row
 
-        -- Raridad chip
         local chip = Instance.new("TextLabel")
-        chip.Size = UDim2.new(0, 0, 0, 18)
+        chip.Size = UDim2.new(0,0,0,17)
         chip.AutomaticSize = Enum.AutomaticSize.X
-        chip.Position = UDim2.new(0, 42, 0, 32)
+        chip.Position = UDim2.new(0,42,0,33)
         chip.BackgroundColor3 = RARITY_COLOR[b.rarity] or Color3.fromRGB(80,80,80)
-        chip.BackgroundTransparency = 0.5
-        chip.Text = "  " .. (RARITY_LABEL[b.rarity] or b.rarity) .. "  "
+        chip.BackgroundTransparency = 0.45
+        chip.Text = "  "..(RARITY_LABEL[b.rarity] or b.rarity).."  "
         chip.TextColor3 = Color3.fromRGB(255,255,255)
         chip.TextSize = 10
         chip.Font = Enum.Font.GothamBold
         chip.BorderSizePixel = 0
         chip.Parent = row
-        Instance.new("UICorner", chip).CornerRadius = UDim.new(0, 5)
+        Instance.new("UICorner", chip).CornerRadius = UDim.new(0,5)
 
-        -- Valor
         local valLbl = Instance.new("TextLabel")
-        valLbl.Size = UDim2.new(0, 90, 0, 22)
-        valLbl.Position = UDim2.new(1, -100, 0, 6)
+        valLbl.Size = UDim2.new(0,90,0,22)
+        valLbl.Position = UDim2.new(1,-100,0,6)
         valLbl.BackgroundTransparency = 1
         valLbl.Text = formatMoney(b.value)
-        valLbl.TextColor3 = Color3.fromRGB(80, 220, 120)
+        valLbl.TextColor3 = Color3.fromRGB(80,220,120)
         valLbl.TextSize = 15
         valLbl.Font = Enum.Font.GothamBold
         valLbl.TextXAlignment = Enum.TextXAlignment.Right
         valLbl.Parent = row
 
-        -- Gen/sec si disponible
         if b.genPerSec then
             local genLbl = Instance.new("TextLabel")
-            genLbl.Size = UDim2.new(0, 90, 0, 16)
-            genLbl.Position = UDim2.new(1, -100, 0, 28)
+            genLbl.Size = UDim2.new(0,90,0,16)
+            genLbl.Position = UDim2.new(1,-100,0,30)
             genLbl.BackgroundTransparency = 1
-            genLbl.Text = formatMoney(b.genPerSec) .. "/s"
-            genLbl.TextColor3 = Color3.fromRGB(255, 200, 60)
+            genLbl.Text = formatMoney(b.genPerSec).."/s"
+            genLbl.TextColor3 = Color3.fromRGB(255,200,60)
             genLbl.TextSize = 11
             genLbl.Font = Enum.Font.Gotham
             genLbl.TextXAlignment = Enum.TextXAlignment.Right
             genLbl.Parent = row
         end
     end
-
-    Scroll.CanvasSize = UDim2.new(0, 0, 0, #brainrots * 58)
+    Scroll.CanvasSize = UDim2.new(0,0,0,#brainrots*60)
 end
 
--- ── ESCANEAR ─────────────────────────────────────────────────
+-- Escanear
 local function escanear()
     ScanBtn.Text = "⏳  Escaneando..."
-    ScanBtn.BackgroundColor3 = Color3.fromRGB(120, 80, 0)
-
+    ScanBtn.BackgroundColor3 = Color3.fromRGB(100,60,0)
     local brainrots = leerBrainrots()
-
-    -- Calcular valor total
-    local totalValue = 0
-    for _, b in ipairs(brainrots) do
-        totalValue = totalValue + b.value
-    end
-
-    ValueLbl.Text = "💰 Valor total: " .. formatMoney(totalValue)
-    CountLbl.Text = "🧠 Brainrots: " .. #brainrots
-
+    local total = 0
+    for _, b in ipairs(brainrots) do total = total + b.value end
+    ValueLbl.Text = "💰 Valor: "..formatMoney(total)
+    CountLbl.Text = "🧠 Brainrots: "..#brainrots
     renderBrainrots(brainrots)
-
-    ScanBtn.Text = "🔍  ESCANEAR ESTE SERVER"
-    ScanBtn.BackgroundColor3 = Color3.fromRGB(255, 130, 0)
-
-    -- Auto-check: ¿hay alguno de la raridad seleccionada o mejor?
-    local minValue = RARITY_VALUE[selectedRarity] or 0
-    local hasBueno = false
+    ScanBtn.Text = "🔍  ESCANEAR"
+    ScanBtn.BackgroundColor3 = Color3.fromRGB(255,130,0)
+    local minVal = RARITY_VALUE[selectedRarity] or 0
     for _, b in ipairs(brainrots) do
-        if b.value >= minValue then
-            hasBueno = true
-            break
-        end
+        if b.value >= minVal then return brainrots, true end
     end
-
-    return brainrots, hasBueno
+    return brainrots, false
 end
 
--- ── OBTENER SIGUIENTE SERVIDOR ───────────────────────────────
+-- Cola servidores
 local serverQueue = {}
 local queueCursor = nil
-local queueLoaded = false
 
 local function cargarServidores()
     local ok, data = pcall(function()
@@ -563,53 +589,38 @@ local function cargarServidores()
     end)
     if ok and data then
         for _, s in ipairs(data.data or {}) do
-            if s.id ~= game.JobId then
-                table.insert(serverQueue, s.id)
-            end
+            if s.id ~= game.JobId then table.insert(serverQueue, s.id) end
         end
         queueCursor = data.nextPageCursor
     end
-    queueLoaded = true
 end
 
 local function siguienteServidor()
+    if #serverQueue == 0 then cargarServidores(); task.wait(1) end
     if #serverQueue == 0 then
-        cargarServidores()
-        task.wait(1)
-    end
-    if #serverQueue == 0 then
-        warn("No hay más servidores disponibles")
+        HopBtn.Text = "❌ Sin servidores"
+        task.wait(2)
+        HopBtn.Text = "⏭  SALTAR SERVER"
+        HopBtn.BackgroundColor3 = Color3.fromRGB(40,180,100)
         return
     end
     local nextId = table.remove(serverQueue, 1)
     HopBtn.Text = "⏳  Saltando..."
-    HopBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+    HopBtn.BackgroundColor3 = Color3.fromRGB(60,60,60)
     TeleportService:TeleportToPlaceInstance(PLACE_ID, nextId, LocalPlayer)
 end
 
--- ── BOTONES ──────────────────────────────────────────────────
-ScanBtn.MouseButton1Click:Connect(function()
-    task.spawn(escanear)
-end)
+ScanBtn.MouseButton1Click:Connect(function() task.spawn(escanear) end)
+HopBtn.MouseButton1Click:Connect(function() task.spawn(siguienteServidor) end)
 
-HopBtn.MouseButton1Click:Connect(function()
-    task.spawn(siguienteServidor)
-end)
-
--- ── ESCANEO AUTOMÁTICO AL CARGAR ─────────────────────────────
-task.delay(2, function()
-    -- Esperar a que el juego cargue bien
-    task.spawn(function()
-        cargarServidores()  -- precargar cola de servidores
-    end)
+task.delay(2.5, function()
+    task.spawn(cargarServidores)
     escanear()
 end)
 
--- Notificación
 game:GetService("StarterGui"):SetCore("SendNotification", {
-    Title = "🧠 Brainrot Hopper";
-    Text = "Cargado! Escaneando servidor actual...";
+    Title = "🧠 Brainrot Hopper v2";
+    Text = "Escaneando brainrots reales del servidor...";
     Duration = 3;
 })
-
-print("✅ BrainrotHopper listo")
+print("✅ BrainrotHopper v2 — workspace.Plots > AnimalPodiums")

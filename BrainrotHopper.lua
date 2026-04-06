@@ -1,6 +1,6 @@
 -- =============================================
 -- GROK AURORA SCOUT + MENÚ - Versión GitHub (Delta)
--- Se re-ejecuta automáticamente después de hop
+-- URL: https://raw.githubusercontent.com/titopuch7-cyber/Joiner.lua/refs/heads/main/BrainrotHopper.lua
 -- =============================================
 
 local TS = game:GetService("TeleportService")
@@ -8,7 +8,6 @@ local HS = game:GetService("HttpService")
 local WS = workspace
 local SG = game:GetService("StarterGui")
 local Players = game:GetService("Players")
-local TweenService = game:GetService("TweenService")
 
 local PLACE_ID = 109983668079237
 local WEBHOOK = "https://discord.com/api/webhooks/1490801764817961152/XoDEkrwep6hS76a6eBfkDkkSW6R2-lxPjhQQUsRI9lVVu0ZutXVD9OwgdurFw9Bm9MKT"
@@ -20,8 +19,8 @@ local MAX_TIME = 13
 if getgenv().GrokGitHubScout then return end
 getgenv().GrokGitHubScout = true
 
--- Auto-reinicio vía GitHub (lo más estable en Delta)
-queue_on_teleport("loadstring(game:HttpGet('https://raw.githubusercontent.com/TU_USUARIO/TU_REPO/main/scout.lua'))()")
+-- Auto-reinicio con TU URL REAL (esto es lo importante)
+queue_on_teleport("loadstring(game:HttpGet('https://raw.githubusercontent.com/titopuch7-cyber/Joiner.lua/refs/heads/main/BrainrotHopper.lua'))()")
 
 -- ============== MENÚ GUI ==============
 local ScreenGui = Instance.new("ScreenGui")
@@ -106,7 +105,8 @@ end
 local function findBrainrot()
     for _, obj in ipairs(WS:GetDescendants()) do
         local n = obj.Name:lower()
-        if n:find("brain") or n:find("drop") or n:find("cerberus") or n:find("dragon") or n:find("foxini") or n:find("hotspot") or n:find("lantern") then
+        if n:find("brain") or n:find("drop") or n:find("cerberus") or n:find("dragon") or 
+           n:find("foxini") or n:find("hotspot") or n:find("lantern") then
             local val = nil
             if obj:FindFirstChild("Value") and typeof(obj.Value.Value) == "number" then val = obj.Value.Value
             elseif obj:FindFirstChild("BrainValue") then val = obj.BrainValue.Value
@@ -125,8 +125,22 @@ end
 
 local function sendToDiscord(info, count)
     local m = math.floor(info.value / 1000000)
-    local data = { content = "**🚨 GROK FINDER**", embeds = {{ title = "💎 BEST", description = info.name .. " **[$" .. m .. "M/s]**", color = 65280, fields = {{name="Players", value=count.."/8", inline=true}, {name="Price", value="$"..m.."M/s", inline=true}, {name="JobId", value="```"..game.JobId.."```", inline=false}} }} }
-    pcall(function() HS:PostAsync(WEBHOOK, HS:JSONEncode(data), Enum.HttpContentType.ApplicationJson) end)
+    local data = {
+        content = "**🚨 GROK AURORA FINDER**",
+        embeds = {{
+            title = "💎 BEST ENCONTRADO",
+            description = info.name .. " **[$" .. m .. "M/s]**",
+            color = 65280,
+            fields = {
+                {name = "Jugadores", value = count .. "/8", inline = true},
+                {name = "Precio", value = "$" .. m .. "M/s", inline = true},
+                {name = "JobId", value = "```" .. game.JobId .. "```", inline = false}
+            }
+        }}
+    }
+    pcall(function()
+        HS:PostAsync(WEBHOOK, HS:JSONEncode(data), Enum.HttpContentType.ApplicationJson)
+    end)
 end
 
 local function hop()
@@ -152,7 +166,7 @@ local function checkServer()
 end
 
 -- ============== INICIO ==============
-notify("🚀 Grok Scout GitHub", "Cargado desde GitHub - Menú activo")
+notify("🚀 Grok Scout GitHub", "Cargado correctamente desde tu repo")
 updateStatus("Iniciado correctamente", Color3.fromRGB(0, 255, 150))
 LastAction.Text = "Última acción: Cargado desde GitHub"
 
@@ -164,6 +178,7 @@ task.spawn(function()
         task.wait(1)
         local elapsed = math.floor(tick() - startTime)
         TimeLabel.Text = "Tiempo en servidor: " .. elapsed .. "s"
+        
         if elapsed >= MAX_TIME then
             if not findBrainrot() then
                 hop()
@@ -179,4 +194,4 @@ Players.LocalPlayer.CharacterAdded:Connect(function()
     checkServer()
 end)
 
-print("✅ Menú + GitHub version cargado. Reemplaza la URL de queue_on_teleport con tu raw link.")
+print("✅ Menú cargado desde GitHub. Ahora prueba hoppear.")
